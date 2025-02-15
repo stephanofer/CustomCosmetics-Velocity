@@ -18,13 +18,19 @@ import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
+import net.luckperms.api.context.ImmutableContextSet;
 import net.luckperms.api.model.user.User;
+import net.luckperms.api.query.QueryOptions;
 import org.slf4j.Logger;
 
+import javax.swing.text.html.Option;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Plugin(
@@ -46,7 +52,7 @@ public class CustomCosmeticsVelocity {
     private LuckPerms luckperms;
     private App jpremium;
 
-    private final Map<UUID, String> prefixCache = new ConcurrentHashMap<>();
+    private final Map<UUID, PlayerPrefixData> prefixCache = new ConcurrentHashMap<>();
 
     @Inject
     public CustomCosmeticsVelocity(ProxyServer server, Logger logger){
@@ -75,32 +81,44 @@ public class CustomCosmeticsVelocity {
         if(player == null) return;
         if(!(player.hasPermission("heranetwork.donor"))) return;
 
-//        logger.info("EVENTO JOIN PARA "+ player.getUsername());
         String displayName = player.getUsername();
 
-
         CompletableFuture.supplyAsync(() -> {
+
+            QueryOptions queryOptions = QueryOptions.contextual(ImmutableContextSet.of("server", "rpg"));
+
             User lpUser = luckperms.getUserManager().getUser(uuidPlayer);
-            if (lpUser == null) return "";
+            if (lpUser == null) return new PlayerPrefixData("", "");
 
-            String prefix = lpUser.getCachedData()
-                    .getMetaData()
-                    .getPrefix();
+            String prefixGlobal = Optional.ofNullable(lpUser.getCachedData()
+                            .getMetaData()
+                            .getPrefix())
+                    .orElse("");
 
-//            logger.info("1 PREFFIX "+ prefix);
+            String prefixRpg = Optional.ofNullable(lpUser.getCachedData()
+                            .getMetaData(queryOptions)
+                            .getPrefix())
+                    .orElse("");
 
-            prefixCache.put(player.getUniqueId(), prefix != null ? prefix : "");
+            PlayerPrefixData prefixes = new PlayerPrefixData(prefixGlobal, prefixRpg);
+            prefixCache.put(uuidPlayer, prefixes);
 
-            return prefix != null ? prefix : "";
-        }).thenAccept(prefix -> {
-//            logger.info("Preffix para el jugador "+ prefix);
-            String message = "&r &bSwoooosh "+prefix+"&f"+displayName+" &bha aterrizado!" ;
-            Component component =  LegacyComponentSerializer.legacyAmpersand().deserialize(message);
+            return prefixes;
+        }).thenAccept( (PlayerPrefixData prefixes )-> {
 
-            server.getAllPlayers().forEach(p -> {
-//                logger.info("Enviado mensaje a " + p.getUsername());
-                p.sendMessage(component);
-            });
+            String prefixGlobal = prefixes.prefixGlobal ;
+            String prefixRpg = prefixes.prefixRpg;
+            String messageGlobal = "&r &bSwoooosh "+prefixGlobal+"&f"+displayName+" &bha aterrizado!" ;
+            String messageRpg = "&r &bSwoooosh "+prefixRpg+"&f"+displayName+" &bha aterrizado!" ;
+
+            Component componentGlobal =  messageFormat(messageGlobal);
+            Component componentRpg =  messageFormat(messageRpg);
+
+            server.getScheduler()
+                    .buildTask(this, () -> sendCustomMessage(componentGlobal, componentRpg))
+                    .delay(500, TimeUnit.MILLISECONDS)
+                    .schedule();
+
         }).exceptionally(throwable -> {
             logger.error("Error al procesar el mensaje de conexión para " + player.getUsername(), throwable);
             return null;
@@ -110,22 +128,20 @@ public class CustomCosmeticsVelocity {
     @Subscribe
     public void onDisconnect(DisconnectEvent event){
         Player player = event.getPlayer();
+        UUID uuidPlayer = player.getUniqueId();
         String displayName = player.getUsername();
 
         if(!(player.hasPermission("heranetwork.donor"))) return;
-//        logger.info("EVENTO DISCONNECT PARA "+ player.getUsername());
 
-        String prefix = prefixCache.getOrDefault(player.getUniqueId(), "");
-//        logger.info("Preffix para el jugador "+ prefix);
+        String prefixGlobal = prefixCache.get(uuidPlayer).prefixGlobal;
+        String prefixRpg = prefixCache.get(uuidPlayer).prefixRpg;
 
-        String message = "&r &c¡El jugador "+prefix+"&f"+displayName+" &cha salido del servidor!" ;
-        Component component =  LegacyComponentSerializer.legacyAmpersand().deserialize(message);
+        String messageGlobal = "&r &c¡El jugador "+prefixGlobal+"&f"+displayName+" &cha salido del servidor!" ;
+        String messageRpg = "&r &c¡El jugador "+prefixRpg+"&f"+displayName+" &cha salido del servidor!" ;
+        Component componentGlobal = messageFormat(messageGlobal);
+        Component componentRpg =  messageFormat(messageRpg);
 
-        server.getAllPlayers().forEach(p -> {
-//            logger.info("Enviado mensaje a " + p.getUsername());
-            p.sendMessage(component);
-        });
-
+        sendCustomMessage(componentGlobal, componentRpg);
 
 //        for (Player playerConnected : instance.server.getAllServers()
 //                .stream()
@@ -134,8 +150,28 @@ public class CustomCosmeticsVelocity {
 //            logger.info("Enviando mensaje a: " + playerConnected.getUsername());
 //            playerConnected.sendMessage(message);
 //        }
-        prefixCache.remove(player.getUniqueId());
-
-
+        if (prefixCache.containsKey(uuidPlayer)) {
+            prefixCache.remove(uuidPlayer);
+        }
     }
-}
+
+
+    public Component messageFormat(String message){
+        return LegacyComponentSerializer.legacyAmpersand().deserialize(message);
+    }
+
+    public void sendCustomMessage(Component messageGlobal, Component messageRpg){
+        server.getAllPlayers().forEach(p -> {
+            p.getCurrentServer().ifPresent(serverConnection -> {
+                String serverName = serverConnection.getServerInfo().getName();
+
+                if (serverName.equalsIgnoreCase("rpg")) {
+                    p.sendMessage(messageRpg);
+                } else {
+                    p.sendMessage(messageGlobal);
+                }
+            });
+        });
+    }
+    }
+
