@@ -2,36 +2,34 @@ package com.stephanofer.customCosmeticsVelocity;
 
 import com.google.inject.Inject;
 import com.jakub.jpremium.proxy.api.App;
-import com.jakub.jpremium.proxy.api.event.velocity.UserEvent;
-import com.jakub.jpremium.velocity.JPremiumVelocity;
-import com.velocitypowered.api.event.connection.DisconnectEvent;
-import com.velocitypowered.api.event.connection.PostLoginEvent;
+import com.jakub.jpremium.proxy.api.JPremiumApi;
+import com.stephanofer.customCosmeticsVelocity.Events.PlayerDisconnect;
+import com.stephanofer.customCosmeticsVelocity.Events.PlayerLoginSuccessful;
+import com.velocitypowered.api.command.BrigadierCommand;
+import com.velocitypowered.api.command.CommandManager;
+import com.velocitypowered.api.command.CommandMeta;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.plugin.Dependency;
 import com.velocitypowered.api.plugin.Plugin;
-import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.plugin.PluginContainer;
+import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
-import net.kyori.adventure.text.format.TextColor;
-import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
+import dev.dejvokep.boostedyaml.YamlDocument;
+import dev.dejvokep.boostedyaml.dvs.versioning.BasicVersioning;
+import dev.dejvokep.boostedyaml.settings.dumper.DumperSettings;
+import dev.dejvokep.boostedyaml.settings.general.GeneralSettings;
+import dev.dejvokep.boostedyaml.settings.loader.LoaderSettings;
+import dev.dejvokep.boostedyaml.settings.updater.UpdaterSettings;
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
-import net.luckperms.api.context.ImmutableContextSet;
-import net.luckperms.api.model.user.User;
-import net.luckperms.api.query.QueryOptions;
 import org.slf4j.Logger;
 
-import javax.swing.text.html.Option;
-import java.util.HashMap;
-import java.util.Map;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.Objects;
 import java.util.Optional;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 @Plugin(
         id = "customcosmetics-velocity",
@@ -44,134 +42,98 @@ import java.util.stream.Collectors;
                 @Dependency(id = "jpremium")
         }
 )
-public class CustomCosmeticsVelocity {
 
-    private static CustomCosmeticsVelocity instance;
+public class CustomCosmeticsVelocity {
     private final ProxyServer server;
-    public static Logger logger;
+    private final Logger logger;
     private LuckPerms luckperms;
     private App jpremium;
-
-    private final Map<UUID, PlayerPrefixData> prefixCache = new ConcurrentHashMap<>();
+    private CacheManager cacheManager;
+    private Utils utils;
+    private final Path dataDirectory;
+    private ConfigManager configManager;
 
     @Inject
-    public CustomCosmeticsVelocity(ProxyServer server, Logger logger){
-            instance = this;
+    public CustomCosmeticsVelocity(ProxyServer server, Logger logger, @DataDirectory Path dataDirectory) {
             this.server = server;
-            CustomCosmeticsVelocity.logger = logger;
+            this.logger = logger;
+            this.dataDirectory = dataDirectory;
     }
-
 
     @Subscribe
     public void onProxyInitialization(ProxyInitializeEvent event) {
-        this.luckperms = LuckPermsProvider.get();
-        this.jpremium = JPremiumVelocity.getApplication();
-
-        if (this.luckperms != null && this.jpremium != null)  {
-            logger.info("CustomCosmetics Iniciado correctamente");
+        try {
+            luckperms = LuckPermsProvider.get();
+            logger.info("LuckPerms loaded successfully");
+        } catch (IllegalStateException e) {
+            logger.error("LuckPerms is not installed, please install it first");
+            return;
         }
 
-    }
-
-    @Subscribe
-    public void onAuthSuccess(UserEvent.Login event){
-        UUID uuidPlayer = event.getUserProfile().getUniqueId();
-        Player player = server.getPlayer(uuidPlayer).orElse(null);
-
-        if(player == null) return;
-        if(!(player.hasPermission("heranetwork.donor"))) return;
-
-        String displayName = player.getUsername();
-
-        CompletableFuture.supplyAsync(() -> {
-
-            QueryOptions queryOptions = QueryOptions.contextual(ImmutableContextSet.of("server", "rpg"));
-
-            User lpUser = luckperms.getUserManager().getUser(uuidPlayer);
-            if (lpUser == null) return new PlayerPrefixData("", "");
-
-            String prefixGlobal = Optional.ofNullable(lpUser.getCachedData()
-                            .getMetaData()
-                            .getPrefix())
-                    .orElse("");
-
-            String prefixRpg = Optional.ofNullable(lpUser.getCachedData()
-                            .getMetaData(queryOptions)
-                            .getPrefix())
-                    .orElse("");
-
-            PlayerPrefixData prefixes = new PlayerPrefixData(prefixGlobal, prefixRpg);
-            prefixCache.put(uuidPlayer, prefixes);
-
-            return prefixes;
-        }).thenAccept( (PlayerPrefixData prefixes )-> {
-
-            String prefixGlobal = prefixes.prefixGlobal ;
-            String prefixRpg = prefixes.prefixRpg;
-            String messageGlobal = "&r &bSwoooosh "+prefixGlobal+"&f"+displayName+" &bha aterrizado!" ;
-            String messageRpg = "&r &bSwoooosh "+prefixRpg+"&f"+displayName+" &bha aterrizado!" ;
-
-            Component componentGlobal =  messageFormat(messageGlobal);
-            Component componentRpg =  messageFormat(messageRpg);
-
-            server.getScheduler()
-                    .buildTask(this, () -> sendCustomMessage(componentGlobal, componentRpg))
-                    .delay(500, TimeUnit.MILLISECONDS)
-                    .schedule();
-
-        }).exceptionally(throwable -> {
-            logger.error("Error al procesar el mensaje de conexión para " + player.getUsername(), throwable);
-            return null;
-        });
-    }
-
-    @Subscribe
-    public void onDisconnect(DisconnectEvent event){
-        Player player = event.getPlayer();
-        UUID uuidPlayer = player.getUniqueId();
-        String displayName = player.getUsername();
-
-        if(!(player.hasPermission("heranetwork.donor"))) return;
-
-        String prefixGlobal = prefixCache.get(uuidPlayer).prefixGlobal;
-        String prefixRpg = prefixCache.get(uuidPlayer).prefixRpg;
-
-        String messageGlobal = "&r &c¡El jugador "+prefixGlobal+"&f"+displayName+" &cha salido del servidor!" ;
-        String messageRpg = "&r &c¡El jugador "+prefixRpg+"&f"+displayName+" &cha salido del servidor!" ;
-        Component componentGlobal = messageFormat(messageGlobal);
-        Component componentRpg =  messageFormat(messageRpg);
-
-        sendCustomMessage(componentGlobal, componentRpg);
-
-//        for (Player playerConnected : instance.server.getAllServers()
-//                .stream()
-//                .flatMap(server -> server.getPlayersConnected().stream())
-//                .collect(Collectors.toList())){
-//            logger.info("Enviando mensaje a: " + playerConnected.getUsername());
-//            playerConnected.sendMessage(message);
-//        }
-        if (prefixCache.containsKey(uuidPlayer)) {
-            prefixCache.remove(uuidPlayer);
+        try {
+            jpremium = JPremiumApi.getApp();
+            if (jpremium == null) {
+                logger.error("Failed to get JPremium application instance");
+                return;
+            }
+            logger.info("JPremium loaded successfully");
+        } catch (Exception e) {
+            logger.error("Error loading JPremium: " + e.getMessage());
+            return;
         }
-    }
+
+        cacheManager = new CacheManager();
+        configManager = new ConfigManager(dataDirectory,this);
+        utils = new Utils(this);
+
+        ToggleJoinCommand toggleJoinCommand = new ToggleJoinCommand(this);
+        BrigadierCommand brigadierCommand = toggleJoinCommand.createBrigadierCommand();
+        CommandManager commandManager = server.getCommandManager();
+
+        CommandMeta commandMeta = commandManager.metaBuilder(brigadierCommand)
+                        .plugin(this)
+                        .build();
+
+        commandManager.register(commandMeta, brigadierCommand);
+
+        logger.info("Comando /joinannounce ha sido registrado correctamente");
 
 
-    public Component messageFormat(String message){
-        return LegacyComponentSerializer.legacyAmpersand().deserialize(message);
+
+
+
+//        server.getEventManager().register(this, new PlayerEventListener(this));
+        server.getEventManager().register(this, new PlayerDisconnect(this));
+        server.getEventManager().register(this, new PlayerLoginSuccessful(this));
+        logger.info("CustomCosmetics initialization completed successfully");
     }
 
-    public void sendCustomMessage(Component messageGlobal, Component messageRpg){
-        server.getAllPlayers().forEach(p -> {
-            p.getCurrentServer().ifPresent(serverConnection -> {
-                String serverName = serverConnection.getServerInfo().getName();
+    public ProxyServer getServer() {
+        return server;
+    }
 
-                if (serverName.equalsIgnoreCase("rpg")) {
-                    p.sendMessage(messageRpg);
-                } else {
-                    p.sendMessage(messageGlobal);
-                }
-            });
-        });
+    public Logger getLogger() {
+        return logger;
     }
+
+    public LuckPerms getLuckperms() {
+        return luckperms;
     }
+
+    public App getJpremium() {
+        return jpremium;
+    }
+
+    public CacheManager getCacheManager() {
+        return cacheManager;
+    }
+
+    public Utils getUtils() {
+        return utils;
+    }
+
+    public ConfigManager getConfigManager() {
+        return configManager;
+    }
+}
 

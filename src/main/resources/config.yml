@@ -1,0 +1,10 @@
+file-version: 1
+
+permission-donor: "heranetwork.donor"
+permission-command-usage: "heranetwork.donor.toggle"
+
+messageRPG: "&r &bSwoooosh %prefix% &f%player% &bha aterrizado!"
+messageGLOBAL: "&r &bSwoooosh %prefix%%player% &bha aterrizado!"
+messageLogoutRPG: "&r &c¡El jugador %prefix% &f%player% &cha salido del servidor!"
+messageLogoutGLOBAL: "&r &c¡El jugador %prefix%%player% &cha salido del servidor!"
+

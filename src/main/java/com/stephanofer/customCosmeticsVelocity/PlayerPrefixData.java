@@ -2,11 +2,19 @@ package com.stephanofer.customCosmeticsVelocity;
 
 public class PlayerPrefixData {
 
-    String prefixGlobal;
-    String prefixRpg;
+    private final String prefixRpg;
+    private final String prefixGlobal;
 
-    public PlayerPrefixData(String prefixGlobal, String prefixRpg){
-        this.prefixGlobal = prefixGlobal;
+    public PlayerPrefixData(String prefixRpg, String prefixGlobal){
         this.prefixRpg = prefixRpg;
+        this.prefixGlobal = prefixGlobal;
+    }
+
+    public String getPrefixRpg() {
+        return prefixRpg;
+    }
+
+    public String getPrefixGlobal() {
+        return prefixGlobal;
     }
 }
